@@ -4,7 +4,6 @@ from sklearn.base import clone
 from sklearn.model_selection import cross_val_score,KFold,cross_validate,train_test_split
 from sklearn.preprocessing import StandardScaler
 from lightgbm import LGBMClassifier
-from xgboost import XGBClassifier  
 from datetime import datetime
 
 def uplift_fit_predict(model, X_train, treatment_train, target_train, X_test):
@@ -151,7 +150,7 @@ if __name__ == "__main__":
     df_test = reduce_mem_usage(df_test)
     df_products = pandas.read_csv('data/products.csv', index_col='product_id')
     df_products = reduce_mem_usage(df_products)
-    df_purchases = pandas.read_csv('data/purchases.csv', nrows=30000)
+    df_purchases = pandas.read_csv('data/purchases.csv')
     df_purchases = reduce_mem_usage(df_purchases)
 
     # Извлечение признаков
