@@ -174,10 +174,17 @@ def print_cv(df, pars, params_values_check={}):
     for k, v in params_values_check.items():
         cv_res_small = {}
         for values_param in v:
+<<<<<<< HEAD
             pars[k] = values_param
             model = LGBMClassifier(**pars)
             val_score = predict(df,model=model,print_score=True,make_sibmition=False, return_score=True)
             cv_res_small[values_param] = val_score
+=======
+            pars[k] = v
+            model = LGBMClassifier(**pars)
+            val_score = predict(df,model=model,print_score=False,make_sibmition=False, return_score=True)
+            cv_res_small[v] = val_score
+>>>>>>> a0ee7d560dbf8e2166055baaeb22fac0ef95340e
         cv_res[k] = cv_res_small
     print(cv_res)
 
@@ -192,7 +199,7 @@ if __name__ == "__main__":
     df_test = reduce_mem_usage(df_test)
     df_products = pandas.read_csv('data/products.csv', index_col='product_id')
     df_products = reduce_mem_usage(df_products)
-    df_purchases = pandas.read_csv('data/purchases.csv')
+    df_purchases = pandas.read_csv('data/purchases.csv', nrows=3000)
     df_purchases = reduce_mem_usage(df_purchases)
 
     # Извлечение признаков
@@ -376,5 +383,10 @@ if __name__ == "__main__":
     }
     model = LGBMClassifier(**params)
     predict(df_features,model=model,print_score=True,make_sibmition=True, filename='submission')
+<<<<<<< HEAD
     print('CV!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!')
     print_cv(df_features, params, params_values_check={'n_estimators':[i for i in range(100,1001,100)]})
+=======
+
+    print_cv(df_features, params, params_values_check={n_estimators:[i for i in range(100,1001,100)]})
+>>>>>>> a0ee7d560dbf8e2166055baaeb22fac0ef95340e
