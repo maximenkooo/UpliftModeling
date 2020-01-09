@@ -58,7 +58,7 @@ def uplift_score(prediction, treatment, target, rate=0.3):
     score = treatment_p - control_p
     return score
 
-def predict(df_features, model,print_score=True,save_model=True, make_sibmition=True, filename='submission'):
+def predict(df_features, model,print_score=True,save_model=True, make_sibmition=True, filename='submission', return_score=False):
     
     now = str(datetime.now()).replace(' ','-')[:13]
     indices_train = df_train.index
@@ -80,6 +80,8 @@ def predict(df_features, model,print_score=True,save_model=True, make_sibmition=
             target=df_train.loc[indices_valid, 'target'].values,
             )
         print('Validation score:', valid_score)
+        if return_score:
+            return valid_score
     #
     if make_sibmition:
         test_uplift, model_treatment, model_control = uplift_fit_predict(
@@ -166,6 +168,19 @@ def diff_betw_trans(df):
         me = diff_day[1:].mean()
         dict_clietns_diffs_tranc[cli] = me
     return dict_clietns_diffs_tranc
+
+def print_cv(df, pars, params_values_check={}):
+    cv_res = {}
+    for k, v in params_values_check.items():
+        cv_res_small = {}
+        for values_param in v:
+            pars[k] = v
+            model = LGBMClassifier(**pars)
+            val_score = predict(df,model=model,print_score=False,make_sibmition=False, return_score=True)
+            cv_res_small[v] = val_score
+        cv_res[k] = cv_res_small
+    print(cv_res)
+
 
 if __name__ == "__main__":
     # Чтение данных
@@ -359,3 +374,5 @@ if __name__ == "__main__":
     }
     model = LGBMClassifier(**params)
     predict(df_features,model=model,print_score=True,make_sibmition=True, filename='submission')
+
+    print_cv(df_features, params, params_values_check={n_estimators:[i for i in range(100,1001,100)]})
