@@ -65,42 +65,43 @@ def predict(df_features, model,print_score=True,save_model=True, make_sibmition=
     indices_test = df_test.index
     indices_learn, indices_valid = train_test_split(df_train.index, test_size=0.3, random_state=123)
 
-    valid_uplift, model_treatment, model_control = uplift_fit_predict(
-        model=model,
-        X_train=df_features.loc[indices_learn, :].fillna(0).values,
-        treatment_train=df_train.loc[indices_learn, 'treatment_flg'].values,
-        target_train=df_train.loc[indices_learn, 'target'].values,
-        X_test=df_features.loc[indices_valid, :].fillna(0).values,
-        return_model=save_model
-    )
     # Оценка качества на валидации
-    if save_model:
-            # Save the model as a pickle in a file 
-        name_file_model_tr = 'LGBM_model_tr_%s.pkl' %now
-        name_file_model_c = 'LGBM_model_c_%s.pkl' %now
-        joblib.dump(model_treatment, name_file_model_tr) 
-        joblib.dump(model_control, name_file_model_c) 
-    
-        # Load the model from the file 
-        # lgbm_from_joblib = joblib.load('LGBM_model_1.pkl')  
     if print_score:
+        valid_uplift = uplift_fit_predict(
+            model=model,
+            X_train=df_features.loc[indices_learn, :].fillna(0).values,
+            treatment_train=df_train.loc[indices_learn, 'treatment_flg'].values,
+            target_train=df_train.loc[indices_learn, 'target'].values,
+            X_test=df_features.loc[indices_valid, :].fillna(0).values,
+            return_model=False
+            )
         valid_score = uplift_score(valid_uplift,
-        treatment=df_train.loc[indices_valid, 'treatment_flg'].values,
-        target=df_train.loc[indices_valid, 'target'].values,
-        )
+            treatment=df_train.loc[indices_valid, 'treatment_flg'].values,
+            target=df_train.loc[indices_valid, 'target'].values,
+            )
         print('Validation score:', valid_score)
-
+    #
     if make_sibmition:
-        test_uplift = uplift_fit_predict(
+        test_uplift, model_treatment, model_control = uplift_fit_predict(
         model=model,
         X_train=df_features.loc[indices_train, :].fillna(0).values,
         treatment_train=df_train.loc[indices_train, 'treatment_flg'].values,
         target_train=df_train.loc[indices_train, 'target'].values,
         X_test=df_features.loc[indices_test, :].fillna(0).values,
+        return_model=save_model
         )
-
         df_submission = pandas.DataFrame({'uplift': test_uplift}, index=df_test.index)
         df_submission.to_csv(filename + now + '.csv')
+
+        if save_model:
+            # Save the model as a pickle in a file 
+            name_file_model_tr = 'LGBM_model_tr_%s.pkl' %now
+            name_file_model_c = 'LGBM_model_c_%s.pkl' %now
+            joblib.dump(model_treatment, name_file_model_tr) 
+            joblib.dump(model_control, name_file_model_c) 
+    
+        # Load the model from the file 
+        # lgbm_from_joblib = joblib.load('LGBM_model_1.pkl')  
 
 # Original code from https://www.kaggle.com/gemartin/load-data-reduce-memory-usage by @gemartin
 # Modified to support timestamp type, categorical type
