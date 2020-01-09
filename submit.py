@@ -174,10 +174,10 @@ def print_cv(df, pars, params_values_check={}):
     for k, v in params_values_check.items():
         cv_res_small = {}
         for values_param in v:
-            pars[k] = v
+            pars[k] = values_param
             model = LGBMClassifier(**pars)
-            val_score = predict(df,model=model,print_score=False,make_sibmition=False, return_score=True)
-            cv_res_small[v] = val_score
+            val_score = predict(df,model=model,print_score=True,make_sibmition=False, return_score=True)
+            cv_res_small[values_param] = val_score
         cv_res[k] = cv_res_small
     print(cv_res)
 
@@ -244,12 +244,12 @@ if __name__ == "__main__":
     print("Добавлена фича exp_rec_ X4")
 
     # средняя, max, min u std цена покупок
-    temp = df_purchases.groupby(['client_id','transaction_id']).regular_points_spent.mean().rename('reg_spent').groupby('client_id')
+    temp = df_purchases.groupby(['client_id','transaction_id']).regular_points_spent.mean().rename('reg_spent_').groupby('client_id')
     df_features = df_features.join(make_feats(temp,df_features.index))
     print("Добавлена фича reg_spent X4")
 
     # средняя, max, min u std цена покупок
-    temp = df_purchases.groupby(['client_id','transaction_id']).express_points_spent.mean().rename('exp_spent').groupby('client_id')
+    temp = df_purchases.groupby(['client_id','transaction_id']).express_points_spent.mean().rename('exp_spent_').groupby('client_id')
     df_features = df_features.join(make_feats(temp,df_features.index))
     print("Добавлена фича exp_spent X4")
 
@@ -364,6 +364,8 @@ if __name__ == "__main__":
     df_features = df_features.join(lovely_product_df_last_month)
     print("Add feature last_lovely_prod_count")
 
+    imp_feats = ['first_issue_month', 'reg_spent__std', 'last_lovely_prod_count', 'product_quant__max', 'last_product_uni__max', 'trn_sum_from_iss__max', 'gender_M', 'first_redeem_day', 'gender_U', 'last_uniq_prod_by_trunc__max', 'count_all_purschases', 'last_purch_sum__max', 'last_count_all_stores', 'last_reg_rec_max', 'exp_rec__std', 'first_redeem_time', 'trn_sum_from_red__std', 'last_count_all_purschases', 'issue_redeem_delay', 'reg_rec_std', 'product_uni__max', 'uniq_prod_by_trunc__max', 'first_issue_day', 'uniq_prod_by_trunc__std', 'last_product_uni__std', 'age', 'purch_sum__max', 'last_trn_sum_from_iss__std', 'first_issue_year', 'first_redeem_month', 'count_all_stores', 'last_trn_sum_from_red__std', 'trn_sum_from_iss__std', 'last_trn_sum_from_red__max', 'product_uni__std', 'exp_rec__max', 'last_product_quant__std', 'lovely_prod_count', 'trn_sum_from_red__max', 'last_exp_spent_std', 'gender_F', 'last_uniq_prod_by_trunc__std', 'purch_sum__std', 'exp_spent__std', 'product_quant__std', 'last_product_quant__max', 'last_trn_sum_from_iss__max', 'first_redeem_year', 'last_reg_spent_max', 'reg_rec_max', 'last_reg_spent_std', 'last_purch_sum__std', 'first_issue_time']
+    df_features = df_features[imp_feats]
 #    df_features = reduce_mem_usage(df_features)
 
     params = {'n_estimators':200,'learning_rate':0.03,'max_depth':4,'num_leaves':20,
@@ -374,5 +376,5 @@ if __name__ == "__main__":
     }
     model = LGBMClassifier(**params)
     predict(df_features,model=model,print_score=True,make_sibmition=True, filename='submission')
-
-    print_cv(df_features, params, params_values_check={n_estimators:[i for i in range(100,1001,100)]})
+    print('CV!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!')
+    print_cv(df_features, params, params_values_check={'n_estimators':[i for i in range(100,1001,100)]})
