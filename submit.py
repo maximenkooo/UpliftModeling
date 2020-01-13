@@ -8,6 +8,9 @@ from sklearn.preprocessing import StandardScaler
 from sklearn.externals import joblib
 from lightgbm import LGBMClassifier
 from datetime import datetime
+import warnings
+
+warnings.filterwarnings("ignore")
 
 def uplift_fit_predict(model, X_train, treatment_train, target_train, X_test, return_model=True):
     """
@@ -32,14 +35,6 @@ def uplift_fit_predict(model, X_train, treatment_train, target_train, X_test, re
     else:
         return predict_uplift
 
-#def fit_model(model, df, save=True):
-#    X_treatment, y_treatment = df[treatment_train == 1, :], df[treatment_train == 1]
-#    X_control, y_control = df[treatment_train == 0, :], df[treatment_train == 0]
-#    model_treatment = clone(model).fit(X_treatment, y_treatment)
-#    model_control = clone(model).fit(X_control, y_control)
-#    if save:
-#        pickle_model(model_treatment, model_control)
-
 def pickle_model(model_tr, model_c):
     name_file_model_tr = 'LGBM_model_tr_%s.pkl' %now
     name_file_model_tr = 'LGBM_model_c_%s.pkl' %now
@@ -58,8 +53,11 @@ def uplift_score(prediction, treatment, target, rate=0.3):
     score = treatment_p - control_p
     return score
 
-def predict(df_features, model,print_score=True,save_model=True, make_sibmition=True, filename='submission', return_score=False):
-    
+def group_analisys(df_features, model,print_score=True,save_model=True,make_sibmition=True,
+            filename='submission',return_score=False):
+    """
+    Вывод скора, создание сабмитов, сохранение модели
+    """
     now = str(datetime.now()).replace(' ','-')[:13]
     indices_train = df_train.index
     indices_test = df_test.index
@@ -93,17 +91,17 @@ def predict(df_features, model,print_score=True,save_model=True, make_sibmition=
         return_model=save_model
         )
         df_submission = pandas.DataFrame({'uplift': test_uplift}, index=df_test.index)
-        df_submission.to_csv(filename + now + '.csv')
-
+        name = filename + now + '.csv'
+        df_submission.to_csv(name)
+        print(f'File {name} is saved')
         if save_model:
             # Save the model as a pickle in a file 
             name_file_model_tr = 'LGBM_model_tr_%s.pkl' %now
             name_file_model_c = 'LGBM_model_c_%s.pkl' %now
             joblib.dump(model_treatment, name_file_model_tr) 
-            joblib.dump(model_control, name_file_model_c) 
-    
-        # Load the model from the file 
-        # lgbm_from_joblib = joblib.load('LGBM_model_1.pkl')  
+            joblib.dump(model_control, name_file_model_c)  
+            print(f'Model {name_file_model_tr} is saved')
+            print(f'Model {name_file_model_c} is saved')
 
 # Original code from https://www.kaggle.com/gemartin/load-data-reduce-memory-usage by @gemartin
 # Modified to support timestamp type, categorical type
@@ -150,24 +148,15 @@ def reduce_mem_usage(df, use_float16=False):
     
     return df
 
-def make_feats(group, index):
+def make_feats(group, index,logging=True):
     funs = ['mean','max','min','std']
     ser = pandas.DataFrame(index=index)
     for f in funs:
-        ser = ser.join(group.agg(f).fillna(0).astype(int), lsuffix=f'_{f}',rsuffix=f'_{f}')
+        if logging:
+                ser = ser.join(np.log(group.agg(f)).replace([np.inf, -np.inf], 0).fillna(0).astype(int), rsuffix=f'_{f}')
+        else:
+            ser = ser.join(group.agg(f).fillna(0).astype(int), rsuffix=f'_{f}')
     return ser
-
-def diff_betw_trans(df):
-    dict_clietns_diffs_tranc = {}
-    cli_uni = df.client_id.unique()
-    for cli in cli_uni:
-        client_df = df[df.client_id == cli].sort_values(by='transaction_datetime').drop_duplicates(
-            subset='transaction_datetime')
-        diff_day  = pandas.to_datetime(pandas.to_datetime(client_df.transaction_datetime).diff()).apply(
-            lambda x : x.day)
-        me = diff_day[1:].mean()
-        dict_clietns_diffs_tranc[cli] = me
-    return dict_clietns_diffs_tranc
 
 def print_cv(df, pars, params_values_check={}):
     cv_res = {}
@@ -176,11 +165,180 @@ def print_cv(df, pars, params_values_check={}):
         for values_param in v:
             pars[k] = values_param
             model = LGBMClassifier(**pars)
-            val_score = predict(df,model=model,print_score=True,make_sibmition=False, return_score=True)
+            val_score = group_analisys(df,model=model,print_score=True,make_sibmition=False, return_score=True)
             cv_res_small[values_param] = val_score
         cv_res[k] = cv_res_small
     print(cv_res)
 
+def add_fetures(df_clients, df_purchases):
+    df_clients['first_issue_unixtime'] = pandas.to_datetime(df_clients['first_issue_date']).astype(int)/10**9
+    df_clients['first_redeem_unixtime'] = pandas.to_datetime(df_clients['first_redeem_date']).astype(int)/10**9
+    df_features = pandas.DataFrame({
+        'gender_M': (df_clients['gender'] == 'M').astype(int),
+        'gender_F': (df_clients['gender'] == 'F').astype(int),
+        'gender_U': (df_clients['gender'] == 'U').astype(int),
+        'age': df_clients['age'],
+        'first_issue_time': df_clients['first_issue_unixtime'],
+        'first_redeem_time': df_clients['first_redeem_unixtime'],
+        'issue_redeem_delay': df_clients['first_redeem_unixtime'] - df_clients['first_issue_unixtime'],
+    }).fillna(0)
+
+    # кол-во покупок
+    df_features = df_features.join(df_purchases.client_id.value_counts().rename('count_all_purschases'))
+    print("Add feature count_all_purschases")
+    #кол-во уникальных магазинов клиента
+    df_features = df_features.join(df_purchases.groupby(['client_id'])['store_id'].nunique().rename('count_all_stores'))
+    print("Add feature count_all_stores")
+
+    # средняя, max, min u std цена покупок
+    temp = df_purchases.groupby(['client_id','transaction_id']).purchase_sum.mean().rename('purch_sum').groupby('client_id')
+    df_features = df_features.join(make_feats(temp,df_features.index))
+    print("Add feature purch_sum X4")
+
+    # среднее, max, min u std кол-во уникальных продуктов в разных магазинах
+    temp = df_purchases.groupby(['client_id','store_id'])['product_id'].nunique().rename('product_uni').groupby('client_id')
+    df_features = df_features.join(make_feats(temp,df_features.index))
+    print("Add feature product_uni X4")
+
+    #среднее, max, min u std кол-во товаров  за 1 покупку (транзакцию)
+    temp = df_purchases.groupby(['client_id','transaction_id'])['product_quantity'].sum().rename('product_quant').groupby(['client_id'])
+    df_features = df_features.join(make_feats(temp,df_features.index))
+    print("Add feature product_quant X4")
+
+    # признаки трат и сбора экспрес и регулряный баллов по каждой транзакции
+    # средняя, max, min u std цена покупок
+    temp = df_purchases.groupby(['client_id','transaction_id']).regular_points_received.mean().rename('reg_rec').groupby('client_id')
+    df_features = df_features.join(make_feats(temp,df_features.index,logging=False))
+    print("Add feature reg_rec X4")
+
+    # средняя, max, min u std цена покупок
+    temp = df_purchases.groupby(['client_id','transaction_id']).express_points_received.mean().rename('exp_rec').groupby('client_id')
+    df_features = df_features.join(make_feats(temp,df_features.index,logging=False))
+    print("Add feature exp_rec X4")
+
+    # средняя, max, min u std цена покупок
+    temp = df_purchases.groupby(['client_id','transaction_id']).regular_points_spent.mean().rename('reg_spent').groupby('client_id')
+    df_features = df_features.join(make_feats(temp,df_features.index,logging=False))
+    print("Add feature reg_spent X4")
+
+    # средняя, max, min u std цена покупок
+    temp = df_purchases.groupby(['client_id','transaction_id']).express_points_spent.mean().rename('exp_spent').groupby('client_id')
+    df_features = df_features.join(make_feats(temp,df_features.index,logging=False))
+    print("Add feature exp_spent X4")
+
+    # среднее, max, min u std кол-во уникальных продуктов за транзакцию
+    temp = df_purchases.groupby(['client_id','transaction_id'])['product_id'].nunique().rename('uniq_prod_by_trunc').groupby('client_id')
+    df_features = df_features.join(make_feats(temp,df_features.index))
+    print("Add feature uniq_prod_by_trunc X4")
+
+    temp = df_purchases.groupby(['client_id','transaction_id'])['trn_sum_from_iss'].mean().rename('trn_sum_from_iss').groupby('client_id')
+    df_features = df_features.join(make_feats(temp,df_features.index))
+    print("Add feature trn_sum_from_iss X4")
+
+    temp = df_purchases.groupby(['client_id','transaction_id'])['trn_sum_from_red'].mean().rename('trn_sum_from_red').groupby('client_id')
+    df_features = df_features.join(make_feats(temp,df_features.index))
+    print("Add feature trn_sum_from_red X4")
+
+    # для последнего месяца!!
+    last_month = df_purchases[df_purchases['transaction_datetime'].astype(str) > '2019-02-18']
+
+    # кол-во покупок
+    df_features = df_features.join(last_month.client_id.value_counts().rename('last_count_all_purschases'))
+    print("Add feature last_count_all_purschases")
+
+    #кол-во уникальных магазинов клиента
+    df_features = df_features.join(last_month.groupby(['client_id'])['store_id'].nunique().rename(
+        'last_count_all_stores'))
+    print("Add feature last_count_all_stores")
+
+    # средняя, max, min u std цена покупок
+    temp = last_month.groupby(['client_id','transaction_id']).purchase_sum.mean().rename(
+        'last_purch_sum').groupby('client_id')
+    df_features = df_features.join(make_feats(temp,df_features.index))
+    print("Add feature last_purch_sum")
+
+    # среднее, max, min u std кол-во уникальных продуктов в разных магазинах
+    temp = last_month.groupby(['client_id','store_id'])['product_id'].nunique().rename(
+        'last_product_uni').groupby('client_id')
+    df_features = df_features.join(make_feats(temp,df_features.index))
+    print("Add feature last_product_uni")
+
+    #среднее, max, min u std кол-во товаров  за 1 покупку (транзакцию)
+    temp = last_month.groupby(['client_id','transaction_id'])['product_quantity'].sum().rename(
+        'last_product_quant').groupby(['client_id'])
+    df_features = df_features.join(make_feats(temp,df_features.index))
+    print("Add feature last_product_quant  X4")
+
+    # признаки трат и сбора экспрес и регулряный баллов по каждой транзакции
+    # средняя, max, min u std цена покупок
+    temp = last_month.groupby(['client_id','transaction_id']).regular_points_received.mean().rename(
+        'last_reg_rec').groupby('client_id')
+    df_features = df_features.join(make_feats(temp,df_features.index,logging=False))
+    print("Add feature last_reg_rec  X4")
+
+    # средняя, max, min u std цена покупок
+    temp = last_month.groupby(['client_id','transaction_id']).express_points_received.mean().rename(
+        'last_exp_rec').groupby('client_id')
+    df_features = df_features.join(make_feats(temp,df_features.index,logging=False))
+    print("Add feature last_exp_rec  X4")
+
+    # средняя, max, min u std цена покупок
+    temp = last_month.groupby(['client_id','transaction_id']).regular_points_spent.mean().rename(
+        'last_reg_spent').groupby('client_id')
+    df_features = df_features.join(make_feats(temp,df_features.index,logging=False))
+    print("Add feature last_reg_spent  X4")
+
+    # средняя, max, min u std цена покупок
+    temp = last_month.groupby(['client_id','transaction_id']).express_points_spent.mean().rename(
+        'last_exp_spent').groupby('client_id')
+    df_features = df_features.join(make_feats(temp,df_features.index,logging=False))
+    print("Add feature last_exp_spent  X4")
+
+    # среднее, max, min u std кол-во уникальных продуктов за транзакцию
+    temp = last_month.groupby(['client_id','transaction_id'])['product_id'].nunique().rename(
+        'last_uniq_prod_by_trunc').groupby('client_id')
+    df_features = df_features.join(make_feats(temp,df_features.index))
+    print("Add feature last_uniq_prod_by_trunc  X4")
+
+    temp = last_month.groupby(['client_id','transaction_id'])['trn_sum_from_iss'].mean().rename(
+        'last_trn_sum_from_iss').groupby('client_id')
+    df_features = df_features.join(make_feats(temp,df_features.index))
+    print("Add feature last_trn_sum_from_iss  X4")
+
+    temp = last_month.groupby(['client_id','transaction_id'])['trn_sum_from_red'].mean().rename(
+        'last_trn_sum_from_red').groupby('client_id')
+    df_features = df_features.join(make_feats(temp,df_features.index))
+    print("Add feature last_trn_sum_from_red  X4")
+
+    df_clients.first_issue_date = pandas.to_datetime(df_clients.first_issue_date)
+    df_clients.first_redeem_date = pandas.to_datetime(df_clients.first_redeem_date)
+
+    df_features['first_issue_day'] = df_clients.first_issue_date.apply(lambda x: x.day)
+    df_features['first_issue_month'] = df_clients.first_issue_date.apply(lambda x: x.month)
+    df_features['first_issue_year'] = df_clients.first_issue_date.apply(lambda x: x.year)
+    print("Add feature first_issue_day,first_issue_month,first_issue_year")
+
+    df_features['first_redeem_day'] = df_clients.first_redeem_date.apply(lambda x: x.day)
+    df_features['first_redeem_month'] = df_clients.first_redeem_date.apply(lambda x: x.month)
+    df_features['first_redeem_year'] = df_clients.first_redeem_date.apply(lambda x: x.year)
+    print("Add feature first_redeem_day,first_redeem_month,first_redeem_year")
+
+    lovely_product_df = (df_purchases.groupby(['client_id','product_id'])['product_id'].agg(['count']
+    ).sort_values(by='count', ascending=False).reset_index().drop_duplicates('client_id', keep='first')
+                    ).set_index('client_id')['count'].rename('lovely_prod_count')
+    df_features = df_features.join(lovely_product_df)
+    print("Add feature lovely_prod_count")
+
+    lovely_product_df_last_month = (last_month.groupby(['client_id','product_id'])['product_id'].agg(['count']
+    ).sort_values(by='count', ascending=False).reset_index().drop_duplicates('client_id', keep='first')
+                    ).set_index('client_id')['count'].rename('last_lovely_prod_count')
+    df_features = df_features.join(lovely_product_df_last_month)
+    print("Add feature last_lovely_prod_count")
+
+    imp_feats = ['first_issue_month', 'reg_spent_std', 'last_lovely_prod_count', 'product_quant_max', 'last_product_uni_max', 'trn_sum_from_iss_max', 'gender_M', 'first_redeem_day', 'gender_U', 'last_uniq_prod_by_trunc_max', 'count_all_purschases', 'last_purch_sum_max', 'last_count_all_stores', 'last_reg_rec_max', 'exp_rec_std', 'first_redeem_time', 'trn_sum_from_red_std', 'last_count_all_purschases', 'issue_redeem_delay', 'reg_rec_std', 'product_uni_max', 'uniq_prod_by_trunc_max', 'first_issue_day', 'uniq_prod_by_trunc_std', 'last_product_uni_std', 'age', 'purch_sum_max', 'last_trn_sum_from_iss_std', 'first_issue_year', 'first_redeem_month', 'count_all_stores', 'last_trn_sum_from_red_std', 'trn_sum_from_iss_std', 'last_trn_sum_from_red_max', 'product_uni_std', 'exp_rec_max', 'last_product_quant_std', 'lovely_prod_count', 'trn_sum_from_red_max', 'last_exp_spent_std', 'gender_F', 'last_uniq_prod_by_trunc_std', 'purch_sum_std', 'exp_spent_std', 'product_quant_std', 'last_product_quant_max', 'last_trn_sum_from_iss_max', 'first_redeem_year', 'last_reg_spent_max', 'reg_rec_max', 'last_reg_spent_std', 'last_purch_sum_std', 'first_issue_time']
+    df_features = df_features[imp_feats]
+
+    return df_features
 
 if __name__ == "__main__":
     # Чтение данных
@@ -197,176 +355,7 @@ if __name__ == "__main__":
 
     # Извлечение признаков
 
-    df_clients['first_issue_unixtime'] = pandas.to_datetime(df_clients['first_issue_date']).astype(int)/10**9
-    df_clients['first_redeem_unixtime'] = pandas.to_datetime(df_clients['first_redeem_date']).astype(int)/10**9
-    df_features = pandas.DataFrame({
-        'gender_M': (df_clients['gender'] == 'M').astype(int),
-        'gender_F': (df_clients['gender'] == 'F').astype(int),
-        'gender_U': (df_clients['gender'] == 'U').astype(int),
-        'age': df_clients['age'],
-        'first_issue_time': df_clients['first_issue_unixtime'],
-        'first_redeem_time': df_clients['first_redeem_unixtime'],
-        'issue_redeem_delay': df_clients['first_redeem_unixtime'] - df_clients['first_issue_unixtime'],
-    }).fillna(0)
-    cols = df_features.columns
-
-    # кол-во покупок
-    df_features = df_features.join(df_purchases.client_id.value_counts().rename('count_all_purschases'))
-    print("Добавлена фича count_all_purschases")
-    #кол-во уникальных магазинов клиента
-    df_features = df_features.join(df_purchases.groupby(['client_id'])['store_id'].nunique().rename('count_all_stores'))
-    print("Добавлена фича count_all_stores")
-
-    # средняя, max, min u std цена покупок
-    temp = df_purchases.groupby(['client_id','transaction_id']).purchase_sum.mean().rename('purch_sum_').groupby('client_id')
-    df_features = df_features.join(make_feats(temp,df_features.index))
-    print("Добавлена фича purch_sum_ X4")
-
-    # среднее, max, min u std кол-во уникальных продуктов в разных магазинах
-    temp = df_purchases.groupby(['client_id','store_id'])['product_id'].nunique().rename('product_uni_').groupby('client_id')
-    df_features = df_features.join(make_feats(temp,df_features.index))
-    print("Добавлена фича product_uni_ X4")
-
-    #среднее, max, min u std кол-во товаров  за 1 покупку (транзакцию)
-    temp = df_purchases.groupby(['client_id','transaction_id'])['product_quantity'].sum().rename('product_quant_').groupby(['client_id'])
-    df_features = df_features.join(make_feats(temp,df_features.index))
-    print("Добавлена фича product_quant_ X4")
-
-    # признаки трат и сбора экспрес и регулряный баллов по каждой транзакции
-    # средняя, max, min u std цена покупок
-    temp = df_purchases.groupby(['client_id','transaction_id']).regular_points_received.mean().rename('reg_rec').groupby('client_id')
-    df_features = df_features.join(make_feats(temp,df_features.index))
-    print("Добавлена фича reg_rec X4")
-
-    # средняя, max, min u std цена покупок
-    temp = df_purchases.groupby(['client_id','transaction_id']).express_points_received.mean().rename('exp_rec_').groupby('client_id')
-    df_features = df_features.join(make_feats(temp,df_features.index))
-    print("Добавлена фича exp_rec_ X4")
-
-    # средняя, max, min u std цена покупок
-    temp = df_purchases.groupby(['client_id','transaction_id']).regular_points_spent.mean().rename('reg_spent_').groupby('client_id')
-    df_features = df_features.join(make_feats(temp,df_features.index))
-    print("Добавлена фича reg_spent X4")
-
-    # средняя, max, min u std цена покупок
-    temp = df_purchases.groupby(['client_id','transaction_id']).express_points_spent.mean().rename('exp_spent_').groupby('client_id')
-    df_features = df_features.join(make_feats(temp,df_features.index))
-    print("Добавлена фича exp_spent X4")
-
-    # среднее, max, min u std кол-во уникальных продуктов за транзакцию
-    temp = df_purchases.groupby(['client_id','transaction_id'])['product_id'].nunique().rename('uniq_prod_by_trunc_').groupby('client_id')
-    df_features = df_features.join(make_feats(temp,df_features.index))
-    print("Добавлена фича uniq_prod_by_trunc_ X4")
-
-    temp = df_purchases.groupby(['client_id','transaction_id'])['trn_sum_from_iss'].mean().rename('trn_sum_from_iss_').groupby('client_id')
-    df_features = df_features.join(make_feats(temp,df_features.index))
-    print("Добавлена фича trn_sum_from_iss_ X4")
-
-    temp = df_purchases.groupby(['client_id','transaction_id'])['trn_sum_from_red'].mean().rename('trn_sum_from_red_').groupby('client_id')
-    df_features = df_features.join(make_feats(temp,df_features.index))
-    print("Добавлена фича trn_sum_from_red_ X4")
-
-    # для последнего месяца!!
-    last_month = df_purchases[df_purchases['transaction_datetime'].astype(str) > '2019-02-18']
-
-    # кол-во покупок
-    df_features = df_features.join(last_month.client_id.value_counts().rename('last_count_all_purschases'))
-    print("Добавлена фича last_count_all_purschases")
-
-    #кол-во уникальных магазинов клиента
-    df_features = df_features.join(last_month.groupby(['client_id'])['store_id'].nunique().rename(
-        'last_count_all_stores'))
-    print("Добавлена фича last_count_all_stores")
-
-    # средняя, max, min u std цена покупок
-    temp = last_month.groupby(['client_id','transaction_id']).purchase_sum.mean().rename(
-        'last_purch_sum_').groupby('client_id')
-    df_features = df_features.join(make_feats(temp,df_features.index))
-    print("Добавлена фича last_purch_sum_")
-
-    # среднее, max, min u std кол-во уникальных продуктов в разных магазинах
-    temp = last_month.groupby(['client_id','store_id'])['product_id'].nunique().rename(
-        'last_product_uni_').groupby('client_id')
-    df_features = df_features.join(make_feats(temp,df_features.index))
-    print("Добавлена фича last_product_uni_")
-
-    #среднее, max, min u std кол-во товаров  за 1 покупку (транзакцию)
-    temp = last_month.groupby(['client_id','transaction_id'])['product_quantity'].sum().rename(
-        'last_product_quant_').groupby(['client_id'])
-    df_features = df_features.join(make_feats(temp,df_features.index))
-    print("Добавлена фича last_product_quant_")
-
-    # признаки трат и сбора экспрес и регулряный баллов по каждой транзакции
-    # средняя, max, min u std цена покупок
-    temp = last_month.groupby(['client_id','transaction_id']).regular_points_received.mean().rename(
-        'last_reg_rec').groupby('client_id')
-    df_features = df_features.join(make_feats(temp,df_features.index))
-    print("Добавлена фича last_reg_rec")
-
-    # средняя, max, min u std цена покупок
-    temp = last_month.groupby(['client_id','transaction_id']).express_points_received.mean().rename(
-        'last_exp_rec_').groupby('client_id')
-    df_features = df_features.join(make_feats(temp,df_features.index))
-    print("Добавлена фича last_exp_rec_")
-
-    # средняя, max, min u std цена покупок
-    temp = last_month.groupby(['client_id','transaction_id']).regular_points_spent.mean().rename(
-        'last_reg_spent').groupby('client_id')
-    df_features = df_features.join(make_feats(temp,df_features.index))
-    print("Добавлена фича last_reg_spent")
-
-    # средняя, max, min u std цена покупок
-    temp = last_month.groupby(['client_id','transaction_id']).express_points_spent.mean().rename(
-        'last_exp_spent').groupby('client_id')
-    df_features = df_features.join(make_feats(temp,df_features.index))
-    print("Добавлена фича last_exp_spent")
-
-    # среднее, max, min u std кол-во уникальных продуктов за транзакцию
-    temp = last_month.groupby(['client_id','transaction_id'])['product_id'].nunique().rename(
-        'last_uniq_prod_by_trunc_').groupby('client_id')
-    df_features = df_features.join(make_feats(temp,df_features.index))
-    print("Добавлена фича last_uniq_prod_by_trunc_")
-
-    temp = last_month.groupby(['client_id','transaction_id'])['trn_sum_from_iss'].mean().rename(
-        'last_trn_sum_from_iss_').groupby('client_id')
-    df_features = df_features.join(make_feats(temp,df_features.index))
-    print("Добавлена фича last_trn_sum_from_iss_")
-
-    temp = last_month.groupby(['client_id','transaction_id'])['trn_sum_from_red'].mean().rename(
-        'last_trn_sum_from_red_').groupby('client_id')
-    df_features = df_features.join(make_feats(temp,df_features.index))
-    print("Добавлена фича last_trn_sum_from_red_")
-
-    df_clients.first_issue_date = pandas.to_datetime(df_clients.first_issue_date)
-    df_clients.first_redeem_date = pandas.to_datetime(df_clients.first_redeem_date)
-
-    df_features['first_issue_day'] = df_clients.first_issue_date.apply(lambda x: x.day)
-    df_features['first_issue_month'] = df_clients.first_issue_date.apply(lambda x: x.month)
-    df_features['first_issue_year'] = df_clients.first_issue_date.apply(lambda x: x.year)
-    print("Добавлена фича first_issue_day,first_issue_month,first_issue_year")
-
-    df_features['first_redeem_day'] = df_clients.first_redeem_date.apply(lambda x: x.day)
-    df_features['first_redeem_month'] = df_clients.first_redeem_date.apply(lambda x: x.month)
-    df_features['first_redeem_year'] = df_clients.first_redeem_date.apply(lambda x: x.year)
-    print("Добавлена фича first_redeem_day,first_redeem_month,first_redeem_year")
-#    diffs = diff_betw_trans(df_purchases)
-#    df_features = df_features.join(pandas.Series(diffs,name='mean_diffs_tranc'))
-    
-    lovely_product_df = (df_purchases.groupby(['client_id','product_id'])['product_id'].agg(['count']
-    ).sort_values(by='count', ascending=False).reset_index().drop_duplicates('client_id', keep='first')
-                    ).set_index('client_id')['count'].rename('lovely_prod_count')
-    df_features = df_features.join(lovely_product_df)
-    print("Add feature lovely_prod_count")
-
-    lovely_product_df_last_month = (last_month.groupby(['client_id','product_id'])['product_id'].agg(['count']
-    ).sort_values(by='count', ascending=False).reset_index().drop_duplicates('client_id', keep='first')
-                    ).set_index('client_id')['count'].rename('last_lovely_prod_count')
-    df_features = df_features.join(lovely_product_df_last_month)
-    print("Add feature last_lovely_prod_count")
-
-    imp_feats = ['first_issue_month', 'reg_spent__std', 'last_lovely_prod_count', 'product_quant__max', 'last_product_uni__max', 'trn_sum_from_iss__max', 'gender_M', 'first_redeem_day', 'gender_U', 'last_uniq_prod_by_trunc__max', 'count_all_purschases', 'last_purch_sum__max', 'last_count_all_stores', 'last_reg_rec_max', 'exp_rec__std', 'first_redeem_time', 'trn_sum_from_red__std', 'last_count_all_purschases', 'issue_redeem_delay', 'reg_rec_std', 'product_uni__max', 'uniq_prod_by_trunc__max', 'first_issue_day', 'uniq_prod_by_trunc__std', 'last_product_uni__std', 'age', 'purch_sum__max', 'last_trn_sum_from_iss__std', 'first_issue_year', 'first_redeem_month', 'count_all_stores', 'last_trn_sum_from_red__std', 'trn_sum_from_iss__std', 'last_trn_sum_from_red__max', 'product_uni__std', 'exp_rec__max', 'last_product_quant__std', 'lovely_prod_count', 'trn_sum_from_red__max', 'last_exp_spent_std', 'gender_F', 'last_uniq_prod_by_trunc__std', 'purch_sum__std', 'exp_spent__std', 'product_quant__std', 'last_product_quant__max', 'last_trn_sum_from_iss__max', 'first_redeem_year', 'last_reg_spent_max', 'reg_rec_max', 'last_reg_spent_std', 'last_purch_sum__std', 'first_issue_time']
-    df_features = df_features[imp_feats]
-#    df_features = reduce_mem_usage(df_features)
+    df_features = add_fetures(df_clients, df_purchases)
 
     params = {'n_estimators':200,'learning_rate':0.03,'max_depth':4,'num_leaves':20,
              'min_data_in_leaf':3, 'application':'binary',
@@ -375,7 +364,7 @@ if __name__ == "__main__":
              'max_bin':416,'bagging_freq':3,'reg_lambda':0.01,'num_leaves':20             
     }
     model = LGBMClassifier(**params)
-    predict(df_features,model=model,print_score=True,make_sibmition=True, filename='submission')
+    group_analisys(df_features,model=model,print_score=True,make_sibmition=True, filename='submission')
 
     print('CV!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!')
     print_cv(df_features, params, params_values_check={'n_estimators':[i for i in range(100,1001,100)]})
